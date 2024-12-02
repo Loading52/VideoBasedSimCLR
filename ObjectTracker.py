@@ -98,8 +98,39 @@ class ImageSequenceInput:
     def release(self):
         pass
 
+def save_cropped_object(frame, position, size, tracker_id, frame_number, output_dir="output"):
+    """
+    裁剪物体并保存为图片。
+    参数:
+    - frame: 当前帧图像
+    - position: 物体中心位置 (x, y)
+    - size: 物体大小 (w, h)
+    - tracker_id: 物体对应的跟踪器 ID
+    - frame_number: 当前帧号
+    - output_dir: 保存输出的根目录
+    """
+    x, y = position
+    w, h = size
+    crop_size = max(w, h)  # 保证裁剪框长宽比为1:1
+    x1 = max(0, x - crop_size // 2)
+    y1 = max(0, y - crop_size // 2)
+    x2 = min(frame.shape[1], x1 + crop_size)
+    y2 = min(frame.shape[0], y1 + crop_size)
 
-def run_tracking(input_source, output_file="tracking_results.txt"):
+    # 裁剪并缩放到200x200
+    cropped_img = frame[y1:y2, x1:x2]
+    resized_img = cv2.resize(cropped_img, (200, 200))
+
+    # 创建保存目录
+    object_dir = os.path.join(output_dir, f"object_{tracker_id}")
+    os.makedirs(object_dir, exist_ok=True)
+
+    # 保存裁剪图片
+    output_path = os.path.join(object_dir, f"frame_{frame_number}.jpg")
+    cv2.imwrite(output_path, resized_img)
+    print(f"Saved cropped object to {output_path}")
+
+def run_tracking(input_source, output_file="tracking_results.txt", output_dir="output"):
     frame_number = 0
     ret = input_source.read_frame()
     if ret is None:
@@ -168,6 +199,7 @@ def run_tracking(input_source, output_file="tracking_results.txt"):
                     x, y, w, h = cv2.boundingRect(contour)
                     if position == (x + w // 2, y + h // 2):  # 匹配位置，确保 ID 唯一
                         f.write(f"{frame_number},{x},{y},{w},{h},{tracker_id}\n")
+                        save_cropped_object(frame, position, (w, h), tracker_id, frame_number, output_dir)
                         break  # 跳出循环，防止重复写入
 
             # 控制台输出进度，每 100 帧输出一次
