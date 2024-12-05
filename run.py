@@ -117,7 +117,7 @@ flags.DEFINE_string(
     'checkpoint does not already exist in model_dir.')
 
 flags.DEFINE_bool(
-    'zero_init_logits_layer', False,
+    'zero_init_logits_layer', True,
     'If True, zero initialize layers after avg_pool for supervised learning.')
 
 flags.DEFINE_integer(
@@ -306,8 +306,9 @@ def save(model, global_step):
       tf.io.gfile.rmtree(os.path.join(export_dir, str(step_to_delete)))
 
 
-def try_restore_from_checkpoint(model, global_step, optimizer):
+def try_restore_from_checkpoint(model, global_step, optimizer,exclude_heads=True):
   """Restores the latest ckpt if it exists, otherwise check FLAGS.checkpoint."""
+  print("try_restore_from_checkpoint")
   checkpoint = tf.train.Checkpoint(
       model=model, global_step=global_step, optimizer=optimizer)
   checkpoint_manager = tf.train.CheckpointManager(
@@ -315,26 +316,41 @@ def try_restore_from_checkpoint(model, global_step, optimizer):
       directory=FLAGS.model_dir,
       max_to_keep=FLAGS.keep_checkpoint_max)
   latest_ckpt = checkpoint_manager.latest_checkpoint
-  if latest_ckpt:
+  if FLAGS.checkpoint:
+    # Restore model weights only, but not global step and optimizer states
+    print("Restoring from given checkpoint: %s", FLAGS.checkpoint)
+    logging.info('Restoring from given checkpoint: %s', FLAGS.checkpoint)
+    if exclude_heads:
+        # Exclude classification head weights from restoration
+        print("Excluding classification head weights during restoration.")
+        checkpoint_manager2 = tf.train.CheckpointManager(
+            tf.train.Checkpoint(model=model),
+            directory=FLAGS.model_dir,
+            max_to_keep=FLAGS.keep_checkpoint_max)
+        status = checkpoint_manager2.checkpoint.restore(FLAGS.checkpoint).expect_partial()
+        status.assert_existing_objects_matched()
+    else:
+        checkpoint_manager2 = tf.train.CheckpointManager(
+            tf.train.Checkpoint(model=model),
+            directory=FLAGS.model_dir,
+            max_to_keep=FLAGS.keep_checkpoint_max)
+        checkpoint_manager2.checkpoint.restore(FLAGS.checkpoint).expect_partial()
+    if FLAGS.zero_init_logits_layer:
+        model = checkpoint_manager2.checkpoint.model
+        output_layer_parameters = model.supervised_head.trainable_weights
+        logging.info('Initializing output layer parameters %s to zero',
+                     [x.op.name for x in output_layer_parameters])
+        for x in output_layer_parameters:
+            x.assign(tf.zeros_like(x))
+  elif latest_ckpt:
     # Restore model weights, global step, optimizer states
     logging.info('Restoring from latest checkpoint: %s', latest_ckpt)
     checkpoint_manager.checkpoint.restore(latest_ckpt).expect_partial()
-  elif FLAGS.checkpoint:
-    # Restore model weights only, but not global step and optimizer states
-    logging.info('Restoring from given checkpoint: %s', FLAGS.checkpoint)
-    checkpoint_manager2 = tf.train.CheckpointManager(
-        tf.train.Checkpoint(model=model),
-        directory=FLAGS.model_dir,
-        max_to_keep=FLAGS.keep_checkpoint_max)
-    checkpoint_manager2.checkpoint.restore(FLAGS.checkpoint).expect_partial()
-    if FLAGS.zero_init_logits_layer:
-      model = checkpoint_manager2.checkpoint.model
-      output_layer_parameters = model.supervised_head.trainable_weights
-      logging.info('Initializing output layer parameters %s to zero',
-                   [x.op.name for x in output_layer_parameters])
-      for x in output_layer_parameters:
-        x.assign(tf.zeros_like(x))
-
+  print("Restoration complete.")
+  for layer in model.layers:
+      print(layer.name, layer.trainable)
+  for var in model.supervised_head.trainable_weights:
+      print("model vars:",var.name, tf.reduce_sum(var))
   return checkpoint_manager
 
 
@@ -580,7 +596,7 @@ def main(argv):
         supervised_loss_metric = tf.keras.metrics.Mean('train/supervised_loss')
         supervised_acc_metric = tf.keras.metrics.Mean('train/supervised_acc')
         all_metrics.extend([supervised_loss_metric, supervised_acc_metric])
-
+      print("metrics created")
       # Restore checkpoint if available.
       checkpoint_manager = try_restore_from_checkpoint(
           model, optimizer.iterations, optimizer)
@@ -626,6 +642,9 @@ def main(argv):
                                                 contrast_entropy_metric,
                                                 con_loss, logits_con,
                                                 labels_con)
+          tf.summary.scalar('train/contrast_loss', con_loss, step=optimizer.iterations)
+          tf.summary.scalar('train/contrast_acc', contrast_acc_metric.result(), step=optimizer.iterations)
+
         if supervised_head_outputs is not None:
           outputs = supervised_head_outputs
           l = labels['labels']
@@ -639,11 +658,16 @@ def main(argv):
           metrics.update_finetune_metrics_train(supervised_loss_metric,
                                                 supervised_acc_metric, sup_loss,
                                                 l, outputs)
+          tf.summary.scalar('train/supervised_loss', sup_loss, step=optimizer.iterations)
+          tf.summary.scalar('train/supervised_acc', supervised_acc_metric.result(), step=optimizer.iterations)
+
         weight_decay = model_lib.add_weight_decay(
             model, adjust_per_optimizer=True)
         weight_decay_metric.update_state(weight_decay)
+        tf.summary.scalar('train/weight_decay', weight_decay, step=optimizer.iterations)
         loss += weight_decay
         total_loss_metric.update_state(loss)
+        tf.summary.scalar('train/total_loss', loss, step=optimizer.iterations)
         # The default behavior of `apply_gradients` is to sum gradients from all
         # replicas so we divide the loss by the number of replicas so that the
         # mean gradient is applied.
