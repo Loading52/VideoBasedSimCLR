@@ -1,6 +1,6 @@
 import cv2
 import numpy as np
-import os
+from .utils import VideoInput, ImageSequenceInput
 
 
 class ObjectTracker:
@@ -63,40 +63,6 @@ class ObjectTracker:
 
     def get_tracks(self):
         return {tracker_id: tracker_info["history"] for tracker_id, tracker_info in self.trackers.items()}
-
-
-class VideoInput:
-    def __init__(self, video_path):
-        self.cap = cv2.VideoCapture(video_path)
-        self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))  # 总帧数
-
-    def read_frame(self):
-        ret, frame = self.cap.read()
-        if not ret:
-            return None
-        return frame
-
-    def release(self):
-        self.cap.release()
-
-
-class ImageSequenceInput:
-    def __init__(self, image_folder):
-        self.images = sorted([img for img in os.listdir(image_folder) if img.endswith(".jpg") or img.endswith(".png")])
-        self.image_folder = image_folder
-        self.index = 0
-        self.total_frames = len(self.images)  # 通过图片数量确定总帧数
-
-    def read_frame(self):
-        if self.index >= self.total_frames:
-            return None
-        img_path = os.path.join(self.image_folder, self.images[self.index])
-        frame = cv2.imread(img_path)
-        self.index += 1
-        return frame
-
-    def release(self):
-        pass
 
 def save_cropped_object(frame, position, size, tracker_id, frame_number, output_dir="output"):
     """
