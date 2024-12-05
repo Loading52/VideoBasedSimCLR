@@ -1,8 +1,9 @@
 import os
-
+from concurrent.futures import ThreadPoolExecutor
+from threading import Lock
 import cv2
 import numpy as np
-from .utils import VideoInput, ImageSequenceInput
+from utils import VideoInput, ImageSequenceInput
 
 
 class ObjectTracker:
@@ -98,7 +99,7 @@ def save_cropped_object(frame, position, size, tracker_id, frame_number, output_
     cv2.imwrite(output_path, resized_img)
     print(f"Saved cropped object to {output_path}")
 
-def run_tracking(input_source, output_file="tracking_results.txt", output_dir="output"):
+def run_tracking(input_source, output_file="tracking_results.txt", output_dir="output/video_5"):
     frame_number = 0
     ret = input_source.read_frame()
     if ret is None:
@@ -181,7 +182,41 @@ def run_tracking(input_source, output_file="tracking_results.txt", output_dir="o
     print(f"Processing completed. Results saved to '{output_file}'.")
 
 
+def process_folder(i, dirnames):
+    # 子目录路径
+    child_path = os.path.join(dirnames, "img")
+    child_dir = os.path.join(root_path, child_path)
+
+    # 初始化输入源并运行跟踪
+    input_source = ImageSequenceInput(child_dir)
+    run_tracking(
+        input_source,
+        output_file=f"tracking_results_{i}.txt",
+        output_dir=f"output_large/video_{i}"
+    )
+
 if __name__ == "__main__":
     # input_source = VideoInput("video.mp4")
-    input_source = ImageSequenceInput("img")
-    run_tracking(input_source)
+    counter = 0
+    lock = Lock()  # 用于线程同步
+    root_path="../Codes/Data/TinyTLP_V2"
+    dirnames_list = os.listdir(root_path)
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        futures = []
+        for dirnames in dirnames_list:
+            # 使用锁保护计数器
+            with lock:
+                counter += 1
+                current_index = counter
+                if counter==2:
+                    break
+
+            # 提交任务到线程池
+            futures.append(executor.submit(process_folder, current_index, dirnames))
+
+        # 等待所有线程完成
+        for future in futures:
+            future.result()  # 如果需要捕获异常，可以在这里处理
+
+    # input_source = ImageSequenceInput("img")
+    # run_tracking(input_source)

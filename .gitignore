@@ -163,3 +163,5 @@ cython_debug/
 /tracking_results.txt
 
 output/
+/checkpoints/
+/tracking_results/
