@@ -2,7 +2,7 @@ import os
 
 import cv2
 import numpy as np
-from .utils import VideoInput, ImageSequenceInput
+from tracking.utils import ImageSequenceInput
 
 
 class ObjectTracker:

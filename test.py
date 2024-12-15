@@ -88,7 +88,7 @@ if __name__ == "__main__":
     CHECKPOINT_PREFIX = "model.ckpt-250228"
 
     # 测试图像路径
-    TEST_IMAGE_PATH = "output/frame_0001.jpg"
+    TEST_IMAGE_PATH = "output/video_1/object_0/frame_1.jpg"
 
     # 初始化测试器
     tester = SimCLRCheckpointTester(CHECKPOINT_DIR, CHECKPOINT_PREFIX)

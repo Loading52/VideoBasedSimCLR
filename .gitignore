@@ -163,3 +163,9 @@ cython_debug/
 /tracking_results.txt
 
 output/
+.idea/
+**/img*/
+pretrained/
+*.mp4
+*.jpg
+*.zip
