@@ -36,11 +36,11 @@ def build_input_fn_custom(data_dir, global_batch_size, topology, is_training, nu
 
         preprocess_fn = get_preprocess_fn(is_training, is_pretrain=True)
 
-        def map_fn(folder_path):
+        def map_fn(file_path):
             """
             从文件夹生成正样本对，并生成one-hot编码的标签（videoId-objectId）。
             Args:
-                folder_path: 每个 object_xxx 文件夹路径。
+                file_path: 每个 object_xxx 文件夹路径。
             Returns:
                 img_pair: 两张增强后的图片拼接作为正样本对。
                 label: 唯一标识符的 one-hot 编码。
@@ -50,8 +50,7 @@ def build_input_fn_custom(data_dir, global_batch_size, topology, is_training, nu
             # folder_path = tf.strings.regex_replace(folder_path, r"\\", "/")
 
             # 打印替换后的路径
-
-            parts = tf.strings.split(folder_path, '\\')[-2:]  # video_xxx/object_xxx
+            parts = tf.strings.split(file_path, '\\')[-3:]  # video_xxx/object_xxx
             video_id = tf.strings.to_number(tf.strings.substr(parts[0], 6, -1), out_type=tf.int32)
             object_id = tf.strings.to_number(tf.strings.substr(parts[1], 7, -1), out_type=tf.int32)
             image_label = video_id * 1000 + object_id  # 确保唯一性
@@ -59,22 +58,34 @@ def build_input_fn_custom(data_dir, global_batch_size, topology, is_training, nu
             # 转换为 one-hot 编码
             image_label = tf.one_hot(image_label, depth=num_classes)
 
+
+            folder_path = tf.strings.regex_replace(file_path, r"\\frame_.*\.jpg$", "")
+            all_files = tf.io.matching_files(folder_path + "\\*.jpg")
+            shuffled_files = tf.random.shuffle(all_files)
+            filtered_files = tf.boolean_mask(shuffled_files, shuffled_files != file_path)
+
+            img1 = preprocess_file(file_path, preprocess_fn)
+            # 随机选取另一张图片作为正样本对
+            img2_path = tf.cond(tf.size(filtered_files) > 0,
+                                lambda: filtered_files[tf.random.uniform(shape=(), maxval=tf.size(filtered_files), dtype=tf.int32)],
+                                lambda: file_path)  # 如果没有其他图片，则选自己
+            img2 = preprocess_file(img2_path, preprocess_fn)
+
             # 从文件夹中加载图像文件
-            image_files = tf.io.matching_files(folder_path+"\\*.jpg")
-            shuffled_files = tf.random.shuffle(image_files)
-            file_count = tf.shape(shuffled_files)[0]
-
-            if file_count >= 2:
-                # 文件夹中有足够的图片，直接加载两张不同的图片
-                img1 = preprocess_file(shuffled_files[0], preprocess_fn)
-                img2 = preprocess_file(shuffled_files[1], preprocess_fn)
-            else:
-                # 文件夹中图片不足，使用增强方法生成两种视图
-                # tf.print(folder_path+" has less than 2 images. Using augmentation.")
-                img = preprocess_file(shuffled_files[0], preprocess_fn)
-                img1 = preprocess_fn(img)  # 第一次增强
-                img2 = preprocess_fn(img)  # 第二次增强（不同随机增强参数）
-
+            # image_files = tf.io.matching_files(image_path + "\\*.jpg")
+            # shuffled_files = tf.random.shuffle(image_files)
+            # file_count = tf.shape(shuffled_files)[0]
+            # if file_count >= 2:
+            #     # 文件夹中有足够的图片，直接加载两张不同的图片
+            #     img1 = preprocess_file(shuffled_files[0], preprocess_fn)
+            #     img2 = preprocess_file(shuffled_files[1], preprocess_fn)
+            # else:
+            #     # 文件夹中图片不足，使用增强方法生成两种视图
+            #     # tf.print(folder_path+" has less than 2 images. Using augmentation.")
+            #     img = preprocess_file(shuffled_files[0], preprocess_fn)
+            #     img1 = preprocess_fn(img)  # 第一次增强
+            #     img2 = preprocess_fn(img)  # 第二次增强（不同随机增强参数）
+            #
             image_pair = tf.concat([img1, img2], axis=-1)  # 拼接正样本对
 
             return image_pair, image_label
@@ -87,8 +98,9 @@ def build_input_fn_custom(data_dir, global_batch_size, topology, is_training, nu
             return img
 
         # 遍历所有 object_xxx 文件夹
-        dataset = tf.data.Dataset.list_files(f"{data_dir}/video_*/object_*", shuffle=is_training)
+        dataset = tf.data.Dataset.list_files(f"{data_dir}/video_*/object_*/frame_*.jpg", shuffle=is_training)
         dataset = dataset.map(map_fn, num_parallel_calls=tf.data.experimental.AUTOTUNE)
+        # dataset = dataset.map(map_fn)
 
         if is_training:
             buffer_multiplier = 50 if FLAGS.image_size <= 32 else 10
